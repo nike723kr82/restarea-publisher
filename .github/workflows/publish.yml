@@ -38,7 +38,7 @@ jobs:
           cache: pip
 
       - name: Install deps
-        run: pip install -q requests paramiko shapely
+        run: pip install -q -r requirements.txt
 
       - name: Publish
         env:
