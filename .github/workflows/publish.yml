@@ -3,7 +3,11 @@ name: publish-restarea-data
 on:
   schedule:
     - cron: "*/15 * * * *"   # 15분마다 (혼잡 시 지연 가능)
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "노트북 발행이 신선해도 강제 발행 (테스트용)"
+        default: "0"
 
 concurrency:
   group: publish
@@ -48,6 +52,7 @@ jobs:
           FTP_PORT: ${{ secrets.FTP_PORT }}
           FTP_USER_REFININFO: ${{ secrets.FTP_USER_REFININFO }}
           FTP_PASS_REFININFO: ${{ secrets.FTP_PASS_REFININFO }}
+          RESTAREA_FORCE: ${{ github.event.inputs.force || '0' }}
         run: python publish_ci.py
 
       - name: Collect runtime cache (volatile files only)
