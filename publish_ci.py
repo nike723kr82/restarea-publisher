@@ -62,25 +62,60 @@ def main():
         return 0
     prime_vms_from_remote()
 
-    # ITS 링크 속도 동기 취득 (서버에선 백그라운드 스레드지만 CI는 즉시 필요)
+    # ITS 링크 속도 동기 취득 (서버에선 백그라운드 스레드지만 CI는 즉시 필요).
+    # ⚠ ITS(openapi.its.go.kr:9443)는 해외 IP를 차단하므로 GitHub 러너에서
+    # 실패할 수 있다 — 실패 시 속도 의존 파일은 절대 발행하지 않는다
+    # (빈 데이터로 마지막 정상 발행본을 덮어쓰는 사고 방지, 2026-09-03 실측).
+    its_ok = False
     try:
         data = rh._fetch_its_link_speeds()
         if data:
             rh._save_cache("its_link_speeds", data)
             rh._ITS_SPEED_CACHE["data"] = data
             rh._ITS_SPEED_CACHE["at"] = time.time()
+            its_ok = True
             print(f"ITS 링크 속도 {len(data)}건 취득")
     except Exception as e:
-        print(f"[warn] ITS 속도 취득 실패(캐시 폴백): {e}")
+        print(f"[warn] ITS 속도 취득 실패: {e}")
+
+    # 도로공사(data.ex.co.kr) 도달성 진단
+    ex_ok = False
+    try:
+        import requests as _rq
+        _rq.get("https://data.ex.co.kr/openapi/", headers=rh.UA, timeout=15)
+        ex_ok = True
+    except Exception as e:
+        print(f"[warn] 도로공사 API 도달 불가: {e}")
+    print(f"도달성: ITS={its_ok} EX={ex_ok}")
+
+    if not its_ok and not ex_ok:
+        print("두 상류 API 모두 도달 불가 — 발행하지 않고 종료(마지막 발행 유지)")
+        return 0
 
     tr, sftp = rh._sftp_connect()
     try:
         rh._sftp_mkdirs(sftp, rh.RESTAREA_REMOTE_DIR)
-        sizes = rh._publish_fast(sftp)
-        print("fast 발행:", {k: v for k, v in (sizes or {}).items()})
-        if remote_age("cctv.json") > 55 * 60:
-            print("cctv 재발행:", rh._publish_cctv(sftp))
-        if remote_age("list.json") > 23 * 3600:
+        if its_ok:
+            sizes = rh._publish_fast(sftp)
+            print("fast 발행:", {k: v for k, v in (sizes or {}).items()})
+            if remote_age("cctv.json") > 55 * 60:
+                print("cctv 재발행:", rh._publish_cctv(sftp))
+        else:
+            # 속도 의존 파일(link-traffic/local-speeds/city-times/cctv)은 유지하고
+            # 도로공사 기반 파일(돌발·VMS)만 갱신한다.
+            print("ITS 불가 — 돌발·VMS만 부분 발행")
+            inc = rh.get_active_incidents()
+            n = rh._sftp_put_json(sftp, "incidents.json",
+                {"ok": True, "count": len(inc), "items": inc,
+                 "updated_at": time.time()})
+            print(f"incidents.json {n}B ({len(inc)}건)")
+            alerts = rh.get_vms_alerts()
+            if alerts:
+                n = rh._sftp_put_json(sftp, "vms-alerts.json",
+                    {"ok": True, "count": len(alerts), "items": alerts,
+                     "updated_at": time.time()})
+                print(f"vms-alerts.json {n}B ({len(alerts)}건)")
+        if ex_ok and remote_age("list.json") > 23 * 3600:
             print("daily 재발행:", rh._publish_daily(sftp))
     finally:
         sftp.close()
