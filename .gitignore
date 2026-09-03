@@ -1,0 +1,8 @@
+__pycache__/
+runtime_cache/
+restarea_cache/publish_tmp/
+restarea_cache/its_link_speeds.json
+restarea_cache/realunittrtm.json
+restarea_cache/vms_messages.json
+.env
+_local_test.py

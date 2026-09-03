@@ -1,0 +1,22 @@
+name: keepalive
+
+# 공개 리포는 60일간 커밋이 없으면 예약 워크플로우가 자동 중지됨 —
+# 매달 빈 커밋을 남겨 크론을 계속 살려둔다.
+on:
+  schedule:
+    - cron: "17 3 1 * *"   # 매월 1일
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git config user.name "keepalive-bot"
+          git config user.email "actions@github.com"
+          git commit --allow-empty -m "keepalive: $(date -u +%Y-%m-%d)"
+          git push

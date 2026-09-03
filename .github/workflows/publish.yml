@@ -1,0 +1,69 @@
+name: publish-restarea-data
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # 15분마다 (혼잡 시 지연 가능)
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      # 실행 간 캐시 유지 — TTL(유가 12h·VMS 40분 등)이 서버처럼 동작해
+      # 상류 API 호출량이 폭증하지 않게 한다.
+      - name: Restore runtime cache
+        uses: actions/cache/restore@v4
+        with:
+          path: runtime_cache
+          key: restarea-runtime-${{ github.run_id }}
+          restore-keys: restarea-runtime-
+
+      - name: Overlay runtime cache
+        run: |
+          if [ -d runtime_cache ]; then cp -rf runtime_cache/. restarea_cache/; fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -q requests paramiko shapely
+
+      - name: Publish
+        env:
+          EX_OPENAPI_KEY: ${{ secrets.EX_OPENAPI_KEY }}
+          ITS_OPENAPI_KEY: ${{ secrets.ITS_OPENAPI_KEY }}
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+          FTP_USER_REFININFO: ${{ secrets.FTP_USER_REFININFO }}
+          FTP_PASS_REFININFO: ${{ secrets.FTP_PASS_REFININFO }}
+        run: python publish_ci.py
+
+      - name: Collect runtime cache (volatile files only)
+        run: |
+          mkdir -p runtime_cache
+          for f in its_link_speeds.json burstinfo.json curstate.json totalspeed.json \
+                   locationinfo.json restconv.json restbestfood.json resttheme.json \
+                   units.json its_cctv.json lcs_status.json conzone_traffic.json \
+                   realunittrtm.json vms_messages.json; do
+            [ -f "restarea_cache/$f" ] && cp -f "restarea_cache/$f" runtime_cache/ || true
+          done
+          ls -la runtime_cache || true
+
+      - name: Save runtime cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: runtime_cache
+          key: restarea-runtime-${{ github.run_id }}
