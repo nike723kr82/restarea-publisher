@@ -49,8 +49,10 @@ def prime_vms_from_remote():
             rh._VMS_ALERTS_CACHE["data"] = j["items"]
             rh._VMS_ALERTS_CACHE["at"] = time.time()
             print(f"VMS: 라이브 값 재사용({len(j['items'])}건, 스윕 생략)")
+            return ts  # 원본 스윕 시각 — 재발행 시 이 값을 보존해야 40분 뒤 실제 스윕이 돈다
     except Exception as e:
         print(f"[warn] VMS prime 실패(정상 스윕 진행): {e}")
+    return None
 
 
 def main():
@@ -60,7 +62,7 @@ def main():
     if age < FRESH_SKIP_SEC and os.getenv("RESTAREA_FORCE") != "1":
         print("노트북 발행이 신선함 — 이번 회차 스킵 (백업 대기)")
         return 0
-    prime_vms_from_remote()
+    primed_ts = prime_vms_from_remote()
 
     # ITS 링크 속도 동기 취득 (서버에선 백그라운드 스레드지만 CI는 즉시 필요).
     # ⚠ ITS(openapi.its.go.kr:9443)는 해외 IP를 차단하므로 GitHub 러너에서
@@ -98,6 +100,13 @@ def main():
         if its_ok:
             sizes = rh._publish_fast(sftp)
             print("fast 발행:", {k: v for k, v in (sizes or {}).items()})
+            if primed_ts:
+                # _publish_fast가 재사용 VMS를 현재시각으로 찍어버리므로 원본
+                # 스윕 시각을 복원한다(안 하면 "항상 신선"으로 보여 스윕이 영영 안 돎)
+                items = rh._VMS_ALERTS_CACHE.get("data") or []
+                rh._sftp_put_json(sftp, "vms-alerts.json",
+                    {"ok": True, "count": len(items), "items": items,
+                     "updated_at": primed_ts})
             if remote_age("cctv.json") > 55 * 60:
                 print("cctv 재발행:", rh._publish_cctv(sftp))
         else:
@@ -109,12 +118,15 @@ def main():
                 {"ok": True, "count": len(inc), "items": inc,
                  "updated_at": time.time()})
             print(f"incidents.json {n}B ({len(inc)}건)")
-            alerts = rh.get_vms_alerts()
-            if alerts:
-                n = rh._sftp_put_json(sftp, "vms-alerts.json",
-                    {"ok": True, "count": len(alerts), "items": alerts,
-                     "updated_at": time.time()})
-                print(f"vms-alerts.json {n}B ({len(alerts)}건)")
+            if primed_ts:
+                print("vms-alerts.json: 라이브와 동일 — 발행 생략(스윕 시각 보존)")
+            else:
+                alerts = rh.get_vms_alerts()
+                if alerts:
+                    n = rh._sftp_put_json(sftp, "vms-alerts.json",
+                        {"ok": True, "count": len(alerts), "items": alerts,
+                         "updated_at": time.time()})
+                    print(f"vms-alerts.json {n}B ({len(alerts)}건)")
         if ex_ok and remote_age("list.json") > 23 * 3600:
             print("daily 재발행:", rh._publish_daily(sftp))
     finally:
